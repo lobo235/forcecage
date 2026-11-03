@@ -1,0 +1,16 @@
+# Gitleaks config for the forcecage repo (used by the public-push-guard and by
+# any local `gitleaks detect`).
+#
+# The tripwire's test fixtures are deliberately full of fake credential values:
+# they exercise the detector's tiers (known values, Canaries, generic shapes),
+# so generic-api-key and friends would fail every push over them. The fixtures
+# are not real secrets — they are the test input — so the test files are
+# allowlisted by path, not one value at a time (new fixtures land here too).
+title = "forcecage gitleaks config"
+
+[allowlist]
+  id = "tripwire-test-fixtures"
+  description = "the tripwire detector's test fixtures are fake credentials by design"
+  paths = [
+    '''^src/tripwire/.*\.test\.ts$''',
+  ]
