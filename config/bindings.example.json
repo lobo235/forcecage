@@ -1,0 +1,18 @@
+[
+  {
+    "name": "example-api",
+    "host": "api.example.com",
+    "placeholder": "Placeholder-example-api",
+    "match_headers": ["Authorization"],
+    "value": "REPLACE-ME-with-the-real-token",
+    "format": "bearer"
+  },
+  {
+    "name": "git-push",
+    "host": "git.example.com",
+    "placeholder": "Placeholder-git-push",
+    "match_headers": ["Authorization"],
+    "value": "REPLACE-ME-with-base64(user:token)",
+    "format": "basic"
+  }
+]

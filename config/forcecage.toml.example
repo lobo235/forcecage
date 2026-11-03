@@ -1,0 +1,37 @@
+# forcecage.toml — stable install settings for Forcecage.
+#
+# Every value here can be overridden by a CLI flag on `forcecage run`.
+# Relative paths are resolved against $HOME.
+
+[forcecage]
+# The unprivileged account every caged command runs as (ADR-0002).
+# The host must have the sudoers hop installed for this account.
+agent_user = "agent"
+# Per-session runtime state: gate socket, CA, audit log. Operator-owned.
+run_dir = "/run/forcecage"
+# State that survives sessions: canaries, exposure logs, pinned deps.
+state_dir = "~/.local/state/forcecage"
+
+[gate]
+# The iron-proxy binary: a PATH name or an absolute path.
+iron_proxy = "iron-proxy"
+# Pinned sha256 of the binary above. Checked at startup; a mismatch is a
+# hard failure, never a warning.
+iron_proxy_sha256 = ""
+
+[minter]
+# "file" (default): static values from the bindings file; no server needed.
+# "vault": dynamic leases via a Vault AppRole agent (minted leases, ADR-0003).
+kind = "file"
+
+# Uncomment for the Vault minter:
+# [minter.vault]
+# address = "http://127.0.0.1:8200"
+# role_id_file = "~/.local/state/forcecage/minter/role-id"
+# secret_id_file = "~/.local/state/forcecage/minter/secret-id"
+
+[tripwire]
+# Planted canaries for this host (ADR-0003). Per host, never per project.
+canaries_file = "~/.local/state/forcecage/tripwire/canaries.json"
+# Where per-session exposure records are written.
+exposure_dir = "~/.local/state/forcecage/tripwire/exposure"
