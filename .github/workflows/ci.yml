@@ -7,7 +7,10 @@ on:
 
 jobs:
   python:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the latest image moves under us and the
+    # setup-python resolution breaks on versions we still support (3.9 was
+    # dropped for Ubuntu 26.04).
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
@@ -19,7 +22,7 @@ jobs:
       - run: make check
 
   tripwire:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
