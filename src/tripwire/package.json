@@ -1,0 +1,43 @@
+{
+  "name": "@forcecage/tripwire",
+  "version": "0.1.0",
+  "description": "The agent-agnostic core of Forcecage's tripwire: the two-tier credential detector, the redaction/exposure rules, and the Claude Code / Codex hook. No pi import.",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.ts",
+  "types": "index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    }
+  },
+  "bin": {
+    "tripwire-hook": "./bin/tripwire-hook.ts"
+  },
+  "files": [
+    "index.ts",
+    "core.ts",
+    "world.ts",
+    "exposure.ts",
+    "halt.ts",
+    "hook.ts",
+    "hook-main.ts",
+    "encodings.ts",
+    "patterns.ts",
+    "secrets.ts",
+    "sources.ts",
+    "bin/tripwire-hook.ts"
+  ],
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run typecheck && node --test *.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "5.9.3"
+  }
+}

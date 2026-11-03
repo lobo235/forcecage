@@ -18,10 +18,15 @@ these flags override them.
 """
 
 import argparse
+import os
+import subprocess
 import sys
 
 VERSION = "0.1.0"
 VALID_AGENTS = ("pi", "claude", "codex")
+# The tripwire-hook subcommand reaches the npm hook, which only knows the two
+# agents it hooks (pi is the pi extension, not the hook).
+TRIPWIRE_AGENTS = ("claude", "codex")
 
 
 class _Request:
@@ -58,6 +63,10 @@ def _build_parser():
     chkp.add_argument("--bindings", default=None,
                       help="also validate this bindings file")
 
+    twp = sub.add_parser("tripwire-hook",
+                         help="run the Claude/Codex tripwire hook (payload on stdin)")
+    twp.add_argument("agent", help="agent name: claude or codex")
+
     sub.add_parser("version", help="print the version")
     return p
 
@@ -80,7 +89,51 @@ def parse_args(argv):
         req.agent_args = list(args.rest)
     elif args.command == "check":
         req.bindings_path = args.bindings
+    elif args.command == "tripwire-hook":
+        req.agent = args.agent
     return req
+
+
+def _tripwire_bin():
+    """Locate the npm tripwire-hook bin: an explicit override, a PATH hit, then
+    the repo-local bin next to this package (the forcecage checkout)."""
+    override = os.environ.get("FORCECAGE_TRIPWIRE_BIN")
+    if override:
+        return override
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d:
+            candidate = os.path.join(d, "tripwire-hook")
+            if os.path.isfile(candidate):
+                return candidate
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "tripwire", "bin", "tripwire-hook.ts")
+    if os.path.isfile(local):
+        return local
+    return None
+
+
+def cmd_tripwire_hook(req):
+    """Run the agent-agnostic Claude/Codex hook through a process boundary.
+
+    stdin is the hook payload, stdout/stderr pass through, and the child's exit
+    code is returned. The detector logic lives in the npm package; this only
+    reaches it, so the two cannot drift.
+    """
+    import shutil
+    if req.agent not in TRIPWIRE_AGENTS:
+        raise SystemExit(
+            "forcecage tripwire-hook: unknown agent %r (want %s)"
+            % (req.agent, " | ".join(TRIPWIRE_AGENTS)))
+    node = shutil.which("node")
+    if not node:
+        raise SystemExit("forcecage tripwire-hook: node not found on PATH")
+    bin_path = _tripwire_bin()
+    if not bin_path:
+        raise SystemExit(
+            "forcecage tripwire-hook: could not find the tripwire-hook bin "
+            "(set FORCECAGE_TRIPWIRE_BIN, install @forcecage/tripwire, or run "
+            "from the forcecage checkout)")
+    return subprocess.run([node, bin_path, req.agent]).returncode
 
 
 def main(argv):
@@ -91,6 +144,8 @@ def main(argv):
     if req.command == "check":
         from cage import check as check_mod
         return check_mod.cmd_check(req)
+    if req.command == "tripwire-hook":
+        return cmd_tripwire_hook(req)
     if req.command == "run":
         if req.agent not in VALID_AGENTS:
             raise SystemExit(

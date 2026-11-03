@@ -22,15 +22,13 @@ jobs:
       - run: make check
 
   tripwire:
+    # The tripwire core is pure (no pi import) and ships source as TypeScript:
+    # `node --test *.test.ts` needs a Node that runs .ts natively (unflagged type
+    # stripping, Node >= 23.6). 24 is a current LTS line that does.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: |
-          if [ -f src/tripwire/package.json ]; then
-            cd src/tripwire && npm ci && npm test
-          else
-            echo "tripwire package lands in P2"
-          fi
+          node-version: 24
+      - run: cd src/tripwire && npm ci && npm test

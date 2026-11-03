@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": [
+      "es2022"
+    ],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true
+  },
+  // Flat package: type-check EVERY .ts (source, tests and the bin) so a new file cannot land
+  // outside the gate. The shared core has no pi dependency, so there are no pi path mappings here.
+  "include": [
+    "*.ts",
+    "bin/*.ts"
+  ]
+}
