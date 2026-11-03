@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 node_modules/
 dist/
@@ -7,3 +8,4 @@ dist/
 .DS_Store
 # Per-session state never lands in the repo.
 state/
+dist

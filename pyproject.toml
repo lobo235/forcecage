@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forcecage"
+# The version lives in src/cage/cli.py (the single definition the CLI prints);
+# keep the two in lockstep by bumping it there.
+dynamic = ["version"]
+description = "Run coding agents in a bwrap sandbox with a credential-injecting egress gate"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+# No runtime dependencies: stdlib-only is a design constraint (the Agent user's
+# host may not have pip, and the cage must not import its way into a
+# credential).
+dependencies = []
+
+[project.scripts]
+forcecage = "cage.cli:console_main"
+
+[tool.setuptools.dynamic]
+version = { attr = "cage.cli.VERSION" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
