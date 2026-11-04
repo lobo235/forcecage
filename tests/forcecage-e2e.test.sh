@@ -92,6 +92,13 @@ printf '[{"host":"%s","secret_file":"%s","placeholder":"%s","match_headers":["Au
 CLONE="$AGENT_ROOT/clone"
 PKG_ROOT="$AGENT_ROOT/cage-src"
 mkdir -p "$CLONE"
+# the clone is the Agent's WORKDIR (the real launcher flow creates it with
+# `sudo -n -u agent mkdir`), so it must be Agent-writable: the in-Sandbox agent
+# and the agent-side pane both write here (the agent's output, and the
+# agent_pane's `<clone>/.forcec-pane/halt` marker). Agent-owned AND world-
+# writable so the operator can stage the fake agent into it before the run.
+sudo -n chown agent:agent "$CLONE"
+sudo -n chmod 777 "$CLONE"
 # the fake agent binary lives INSIDE the clone: in the Sandbox /tmp is a fresh
 # tmpfs (the operator's paths vanish), and the clone is the one rw bind that
 # carries through at the same path. In a real deployment the agent binary sits

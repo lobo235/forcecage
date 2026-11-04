@@ -114,9 +114,24 @@ class BwrapConfigTest(unittest.TestCase):
         self.assertNotIn("/g/grant/in-host", [b[0] for b in cfg["binds"]])
 
     def test_no_clone(self):
-        cfg = ap.bwrap_config(self._req(clone=None), {})
+        # an empty HOME keeps the config-home binds out of the count (they are
+        # environment-dependent: whatever .pi/.claude/.codex exist under ~).
+        old = os.environ.get("HOME")
+        empty_home = tempfile.mkdtemp(prefix="fc-bwrap-home-")
+        os.environ["HOME"] = empty_home
+        try:
+            cfg = ap.bwrap_config(self._req(clone=None), {})
+        finally:
+            if old is None:
+                del os.environ["HOME"]
+            else:
+                os.environ["HOME"] = old
         self.assertNotIn(("", "", False), cfg["binds"])
-        self.assertEqual(len(cfg["binds"]), 2)  # grant queue only
+        # grant queue + the ro bind of the cage package itself (the in-Sandbox
+        # Grant-service CLI must import it; $HOME is a fresh tmpfs there).
+        pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(ap.__file__)))
+        self.assertIn((pkg_root, pkg_root, True), cfg["binds"])
+        self.assertEqual(len(cfg["binds"]), 3)  # grant queue + pkg
 
 
 class GrantArgvTest(unittest.TestCase):
@@ -209,7 +224,7 @@ class PaneMainTest(unittest.TestCase):
     def test_halt_marker_maps_to_exit_3(self):
         def spawn(env, argv):
             # the sandbox "runs" and a hook plants the halt marker
-            with open(self.clone + "/.forcecage-halt", "w") as fh:
+            with open(os.path.join(self.clone, ".forcec-pane", "halt"), "w") as fh:
                 fh.write("HOLD")
             return FakeProc(rc=0)  # the agent itself returned 0
         rc = ap.agent_pane_main(self._req(), spawn=spawn,
@@ -228,7 +243,9 @@ class PaneMainTest(unittest.TestCase):
         self.assertEqual(rc, 3)
 
     def test_stale_halt_marker_truncated(self):
-        with open(self.clone + "/.forcecage-halt", "w") as fh:
+        pane_dir = os.path.join(self.clone, ".forcec-pane")
+        os.makedirs(pane_dir, exist_ok=True)
+        with open(os.path.join(pane_dir, "halt"), "w") as fh:
             fh.write("stale")
         rc = ap.agent_pane_main(self._req(),
                                 spawn=lambda e, a: FakeProc(rc=0),
@@ -236,7 +253,7 @@ class PaneMainTest(unittest.TestCase):
                                 load_config_fn=lambda p: self._cfg(),
                                 build_bwrap=lambda cfg: ["bwrap"])
         self.assertEqual(rc, 0)
-        with open(self.clone + "/.forcecage-halt") as fh:
+        with open(os.path.join(pane_dir, "halt")) as fh:
             self.assertEqual(fh.read(), "")
 
     def test_scratch_root_and_canary(self):

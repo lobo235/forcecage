@@ -57,6 +57,12 @@ def agent_pane_request(argv):
     p.add_argument("--agent-user", default=None)
     p.add_argument("--tripwire-notify", default=None,
                    help="command to run on a tripwire halt (default: none)")
+    p.add_argument("--approval-in-sbx", action="store_true",
+                   help="bind the Grant escalation channel (in-host rw + "
+                        "placeholders.json ro) into the Sandbox: a test seam "
+                        "that lets a stand-in agent play the escalation gateway")
+    p.add_argument("--extra-binds", default="",
+                   help="extra Sandbox binds, newline-separated SRC:DST[:ro|rw]")
     # The bare `--` is argparse's own end-of-options marker: it is consumed
     # itself, and everything after it (the agent's argv) is collected by the
     # REMAINDER positional (which argparse never mis-parses).
@@ -71,6 +77,8 @@ def agent_pane_request(argv):
         "clone": args.clone,
         "agent_user": args.agent_user,
         "tripwire_notify": args.tripwire_notify,
+        "approval_in_sbx": args.approval_in_sbx,
+        "extra_binds": args.extra_binds,
         "agent": [a for a in args.rest if a != "--"],
     }
 
@@ -90,6 +98,16 @@ def tripwire_files(run_dir, run_id):
     """(halts log, canary file) in the Agent's per-run scratch root."""
     return (os.path.join(run_dir, "halts-" + run_id + ".jsonl"),
             os.path.join(run_dir, "canary-" + run_id + ".json"))
+
+
+def halt_marker_path(clone, run_dir):
+    """The halt marker, inside the agent's workdir (a persistent rw bind, so a
+    halt written by the in-Sandbox tripwire hook survives the Sandbox and the
+    pane can see it after the agent stops). Falls back to the per-run scratch
+    root when there is no clone. Path per the plan's rename table: the
+    pre-extraction `<clone>/.orc-pane/halt` becomes `<clone>/.forcec-pane/halt`.
+    """
+    return os.path.join(clone or run_dir, ".forcec-pane", "halt")
 
 
 def agent_scratch_root(run_id):
@@ -125,9 +143,19 @@ def bwrap_config(req, env):
 
 
 def _bwrap_binds(req):
-    """The rw/ro binds: the clone (the agent's workdir, rw) and the grant
-    queue (the agent writes requests to `in` and reads replies from `out` --
-    a filesystem contract, not a socket, so the unshared netns does not matter).
+    """The rw/ro binds for the agent's Sandbox:
+
+    - the clone (the agent's workdir, rw, and cwd);
+    - the grant queue the agent reaches (in-agent rw, out ro) -- a filesystem
+      contract, not a socket, so the unshared netns does not matter;
+    - the Grant escalation seam (in-host rw + placeholders.json ro), only when
+      the operator opted in via --approval-in-sbx (a test seam: a stand-in
+      agent plays the escalation gateway);
+    - the agent's own executables (the binary's dir) and config homes (ro) --
+      $HOME is a fresh tmpfs in the Sandbox, so nothing under it is visible
+      unless bound here; a dir that is absent for this agent is skipped;
+    - extra operator binds (newline-separated SRC:DST[:ro|rw]).
+
     Parent-before-child ordering is load-bearing: /run/forcecage's tmpfs is
     mounted by sandbox.build_argv before any caller bind."""
     binds = []
@@ -137,18 +165,89 @@ def _bwrap_binds(req):
     gate = req["gate_dir"]
     binds.append((gate + "/grant/in-agent", "/run/forcecage/grant/in-agent", False))
     binds.append((gate + "/grant/out", "/run/forcecage/grant/out", True))
+    if req.get("approval_in_sbx"):
+        # the Grant service writes placeholders.json atomically at boot; a
+        # stand-in agent that plays the gateway needs a readable source before
+        # the service has written it, so pre-create a default if absent.
+        ph = gate + "/grant/placeholders.json"
+        if not os.path.exists(ph):
+            try:
+                with open(ph, "w", encoding="utf-8") as fh:
+                    fh.write('{"live": [], "canaries": []}\n')
+            except OSError:
+                pass
+        binds.append((gate + "/grant/in-host", "/run/forcecage/grant/in-host", False))
+        binds.append((ph, "/run/forcecage/grant/placeholders.json", True))
+    for d in _agent_ro_dirs(req):
+        binds.append((d, d, True))
+    # the cage package itself: the Grant service the in-Sandbox agent invokes
+    # (``python -m cage.grant``, see FORCECAGE_GRANT_BIN) must be importable
+    # inside the Sandbox, but $HOME is a fresh tmpfs there. Bind the pkg ro at
+    # its host path; PYTHONPATH (forwarded by sandbox.ordered_env) points at it,
+    # so the in-Sandbox `cage` import resolves to this read-only copy.
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.isdir(pkg_root):
+        binds.append((pkg_root, pkg_root, True))
+    for src, dst, ro in _parse_extra_binds(req.get("extra_binds")):
+        binds.append((src, dst, ro))
     return binds
 
 
-def grant_serve_argv(req, agent_pid, halts_file):
+def _agent_ro_dirs(req):
+    """The read-only bind dirs: the agent binary's dir + the config homes
+    (.pi, .claude, .codex). The agent runs FROM its binary and reads its
+    config from its home; $HOME is a fresh tmpfs in the Sandbox, so each must
+    be bound explicitly. Only dirs that exist are returned (bwrap errors on a
+    missing bind source). De-duplicated in order (the hook can live inside the
+    bin dir)."""
+    dirs = []
+    agent = req.get("agent") or []
+    if agent:
+        bin_dir = os.path.dirname(agent[0])
+        if bin_dir:
+            dirs.append(bin_dir)
+    home = os.path.expanduser("~")
+    for sub in (".pi", ".claude", ".codex"):
+        dirs.append(os.path.join(home, sub))
+    seen, out = set(), []
+    for d in dirs:
+        if d not in seen and os.path.isdir(d):
+            seen.add(d)
+            out.append(d)
+    return out
+
+
+def _parse_extra_binds(raw):
+    """Newline-separated SRC:DST[:ro|rw] -> [(src, dst, readonly)].
+    Two-field entries default to ro. A malformed line is skipped (an operator
+    convenience, not the security surface)."""
+    out = []
+    for entry in filter(None, (b.strip() for b in (raw or "").split("\n"))):
+        parts = entry.split(":")
+        if len(parts) == 3:
+            out.append((parts[0], parts[1], parts[2].strip() != "rw"))
+        elif len(parts) == 2:
+            out.append((parts[0], parts[1], True))
+    return out
+
+
+def grant_serve_argv(req, agent_pid, halt_file):
     """argv for the Grant service (runs as the Agent user, background). The
     grant contract is file-based (request/reply files in the gate dir's grant
     queue), so the in-Sandbox agent reaches it through the ro/rw binds, not a
-    socket."""
+    socket.
+
+    ``halt_file`` is the tripwire halt MARKER (``<clone>/.forcec-pane/halt``),
+    not the tripwire halts log: the Grant service is the one that detects a
+    misdirected Placeholder (the audit tail), so its ``_signal_halt`` must write
+    the marker the pane body reads to map a halt to exit 3 (the agent's own
+    tripwire writes the same marker on its own halts; the two are the same
+    file). The pre-extraction agent-pane passed ``--halt-file "$halt"`` for the
+    same reason."""
     return [sys.executable, "-m", "cage.grant", "serve",
             "--gate-dir", req["gate_dir"],
             "--agent-pid", str(agent_pid),
-            "--halt-file", halts_file]
+            "--halt-file", halt_file]
 
 
 def tripwire_bwrap_env(halts_file, canary_file, halt_marker, notify=None):
@@ -205,7 +304,8 @@ def agent_pane_main(req, spawn=None, spawn_bg=None, build_bwrap=None,
     if clone:
         os.makedirs(clone, mode=0o700, exist_ok=True)
 
-    halt_marker = (clone or run_dir) + "/.forcecage-halt"
+    halt_marker = halt_marker_path(clone, run_dir)
+    os.makedirs(os.path.dirname(halt_marker), exist_ok=True)
     # the halt marker is truncated at the start of every run: a stale marker
     # from a prior run in the same clone must not halt this one.
     if os.path.exists(halt_marker):
@@ -232,7 +332,7 @@ def agent_pane_main(req, spawn=None, spawn_bg=None, build_bwrap=None,
     b_argv = build_bwrap(bwrap_config(req, env))
     s_proc = spawn(env, b_argv)
 
-    g_argv = grant_serve_argv(req, s_proc.pid, halts_file)
+    g_argv = grant_serve_argv(req, s_proc.pid, halt_marker)
     if cfg.grant_catalog:
         # the catalog is a reviewed artifact the Grant service reads at boot;
         # the path must be Agent-readable (it is not inside the Sandbox).
@@ -243,7 +343,6 @@ def agent_pane_main(req, spawn=None, spawn_bg=None, build_bwrap=None,
                    "--vault-secret-id-file", cfg.vault_secret_id_file]
     g_proc = spawn_bg(env, g_argv)
 
-    halt_marker = (clone or run_dir) + "/.forcecage-halt"
     try:
         rc = s_proc.wait()
     finally:

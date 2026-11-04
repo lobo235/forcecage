@@ -34,6 +34,7 @@ class FakeReq:
         self.clone = over.get("clone", "/home/agent/clones/x")
         self.binary = over.get("binary", "/usr/bin/pi")
         self.agent_args = over.get("agent_args", ["-p", "hi"])
+        self.state_dir = over.get("state_dir")
 
 
 def _config_file(state_dir, sections=None):

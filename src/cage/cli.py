@@ -33,7 +33,8 @@ class _Request:
     """The parsed command, with command-specific fields populated."""
 
     def __init__(self, command, config_path=None, bindings_path=None,
-                 agent=None, clone=None, binary=None, agent_args=None):
+                 agent=None, clone=None, binary=None, agent_args=None,
+                 state_dir=None):
         self.command = command
         self.config_path = config_path
         self.bindings_path = bindings_path
@@ -41,6 +42,7 @@ class _Request:
         self.clone = clone
         self.binary = binary
         self.agent_args = list(agent_args or [])
+        self.state_dir = state_dir
 
 
 def _build_parser():
@@ -53,6 +55,9 @@ def _build_parser():
     runp = sub.add_parser("run", help="run an agent inside the cage")
     runp.add_argument("--bindings", default=None,
                       help="path to the per-session credential bindings file")
+    runp.add_argument("--state-dir", default=None,
+                      help="per-session state dir (overrides the config's "
+                           "state_dir); isolates the gate for concurrent runs")
     runp.add_argument("agent", help="agent name: pi, claude or codex")
     runp.add_argument("clone", help="absolute path to the agent's clone dir")
     runp.add_argument("binary", help="absolute path to the agent binary")
@@ -80,6 +85,7 @@ def parse_args(argv):
     req = _Request(command=args.command, config_path=args.config)
     if args.command == "run":
         req.bindings_path = args.bindings
+        req.state_dir = args.state_dir
         req.agent = args.agent
         req.clone = args.clone
         req.binary = args.binary

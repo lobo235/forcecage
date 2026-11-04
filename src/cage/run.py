@@ -102,13 +102,15 @@ def gate_stop_argv(gate_dir):
     return [sys.executable, "-m", "cage.gate", "stop", "--dir", gate_dir]
 
 
-def agent_pane_argv(req, cfg, gate_dir, ports, config_path, run_id):
+def agent_pane_argv(req, cfg, gate_dir, ports, config_path, run_id,
+                    approval_in_sbx=False, extra_binds=""):
     """argv for the sudo-hop destination (the Agent-user side).
 
     Every value the Agent user needs crosses the hop as an EXPLICIT argument
     (the sudo environment reset strips ambient env): the config path, the gate
     dir, the in-Sandbox proxy port (ports[1]), the host gate tunnel socket,
-    the clone (the agent's workdir), and the agent command.
+    the clone (the agent's workdir), the agent command, and -- when the
+    operator opted in -- the Grant escalation seam and extra Sandbox binds.
     """
     argv = [sys.executable, "-m", "cage.agent_pane",
             "--run-id", run_id,
@@ -119,6 +121,10 @@ def agent_pane_argv(req, cfg, gate_dir, ports, config_path, run_id):
             "--agent-user", cfg.agent_user]
     if req.clone:
         argv += ["--clone", req.clone]
+    if approval_in_sbx:
+        argv += ["--approval-in-sbx"]
+    if extra_binds:
+        argv += ["--extra-binds", extra_binds]
     # the exec'd argv is the binary + its args (the agent NAME is operator-side
     # metadata, not part of the command the Sandbox runs).
     return argv + ["--", req.binary] + list(req.agent_args)
@@ -169,6 +175,11 @@ def run(req, spawn_gate=None, hop_agent=None, stop_gate=None,
     sleep = sleep or time.sleep
 
     cfg = load_cfg(req)
+    if req.state_dir:
+        # per-session isolation: the gate (state_dir/gate) is a fixed path, so
+        # concurrent runs must each own a state_dir. The flag overrides the
+        # config (the plan's "CLI flags override the config").
+        cfg.state_dir = os.path.expanduser(req.state_dir)
     bindings = load_bindings(req)
     config_path = req.config_path or find_config()
     if config_path is None:
@@ -250,9 +261,23 @@ def run(req, spawn_gate=None, hop_agent=None, stop_gate=None,
         if cfg.grant_catalog:
             agent_env["FORCECAGE_GRANT_CATALOG"] = cfg.grant_catalog
 
+        # operator-side seams that must cross the sudo hop as explicit args
+        # (the env reset strips them): the Grant escalation seam (a test seam
+        # the e2e uses to let a stand-in agent play the gateway) and extra
+        # Sandbox binds. The FORCECAGE_ names are primary; the legacy ORC_ names
+        # are honored so a pre-rename caller keeps working.
+        approval_in_sbx = bool(
+            os.environ.get("FORCECAGE_GRANT_APPROVAL_IN_SBX")
+            or os.environ.get("ORC_GRANT_APPROVAL_IN_SBX"))
+        extra_binds = (
+            os.environ.get("FORCECAGE_SANDBOX_BINDS")
+            or os.environ.get("ORC_SANDBOX_BINDS") or "")
+
         proc = hop_agent(agent_env, hop_argv(
             cfg, agent_pane_argv(req, cfg, gate_dir, ports, config_path,
-                                 run_id="run-" + str(int(now())) + "-" + str(os.getpid())),
+                                 run_id="run-" + str(int(now())) + "-" + str(os.getpid()),
+                                 approval_in_sbx=approval_in_sbx,
+                                 extra_binds=extra_binds),
             pythonpath=_cage_src()))
         rc = proc.wait()
     finally:

@@ -5,8 +5,9 @@
  * `~/.local/state/forcecage/tripwire/hook-sessions`), 0600 in a 0700 directory, replaced atomically.
  * A state file that exists but cannot be read counts as halted: fail closed.
  *
- * Halt: the phone push and halt log the pi extension uses, plus `$ORC_TRIPWIRE_HALT_FILE` when a
- * launcher set it, so the pane can report exit 3 after the agent stops.
+ * Halt: the phone push and halt log the pi extension uses, plus `$FORCECAGE_TRIPWIRE_HALT_FILE`
+ * (legacy `$ORC_TRIPWIRE_HALT_FILE`) when a launcher set it, so the pane can report exit 3
+ * after the agent stops.
  */
 import { readFileSync } from "node:fs";
 import * as fs from "node:fs";
@@ -83,7 +84,7 @@ export function realDeps(env: NodeJS.ProcessEnv): HookDeps {
       attempt(() => ports.push("Tripwire halt", reason));
       attempt(() => ports.log({ time: new Date().toISOString(), mode: "hook", reason, outcome: "halt" }));
       attempt(() => process.stderr.write(`TRIPWIRE HALT: ${reason}\n`));
-      const marker = env.ORC_TRIPWIRE_HALT_FILE;
+      const marker = env.FORCECAGE_TRIPWIRE_HALT_FILE || env.ORC_TRIPWIRE_HALT_FILE;
       if (marker) attempt(() => fs.writeFileSync(marker, `${reason}\n`, { mode: 0o600 }));
     },
     stopAgent: () => {
